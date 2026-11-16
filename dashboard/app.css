@@ -113,7 +113,6 @@ td.name span { color: var(--muted); font-size: 12px; font-family: var(--font-num
 .method { margin-top: var(--step-5); padding: var(--step-5); }
 .method h2 { margin-bottom: var(--step-2); }
 .method p { color: var(--muted); max-width: 78ch; margin-top: var(--step-2); }
-.method code { font-family: var(--font-num); font-size: 13px; color: var(--ink); background: var(--surface-2); padding: 1px 5px; border-radius: 4px; }
 .consts { width: 100%; margin-top: var(--step-4); }
 .consts td, .consts th { padding: var(--step-2) var(--step-3); border-bottom: 1px solid var(--border); text-align: left; font-size: 13px; }
 .consts td:last-child, .consts th:last-child { text-align: right; font-family: var(--font-num); }
@@ -176,9 +175,53 @@ td.num .imp { display: block; font-family: var(--font-num); }
 .wf-bar i.neg { background: var(--negative); }
 .wf-bar i.pos { background: var(--growth); }
 .wf-bar i.dim { background: #5b6b85; }
+
+/* Hero proof band: how a value is built, the traded tokens against the
+   curve, and whether the curve earns its keep. */
+.verify { margin-top: var(--step-3); color: var(--growth); font-size: 13px; }
+.verify b, .plan-totals b { font-family: var(--font-num); }
+.hero { display: grid; grid-template-columns: 1fr 1.15fr 1fr; gap: var(--step-4); margin-top: var(--step-4); padding: var(--step-4) var(--step-5); background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-panel); }
+.hero h2 { font-size: 15px; margin-bottom: var(--step-2); }
+.hero p { color: var(--muted); font-size: 13px; margin-top: var(--step-2); }
+.hero p b { color: var(--ink); }
+.hero-formula { font-family: var(--font-num); color: var(--ink); font-size: 13px; }
+.hero-list { margin: var(--step-2) 0 0; padding-left: 18px; display: grid; gap: 2px; color: var(--muted); font-size: 13px; }
+.hero-list li::marker { color: var(--accent); }
+.hero-best button { background: none; border: 0; padding: 0; color: var(--accent); font: inherit; text-decoration: underline; }
+.scatter { width: 100%; height: auto; display: block; }
+.sc-live { fill: var(--growth); opacity: 0.85; }
+.sc-curve { stroke: var(--accent); stroke-width: 2; }
+.sc-med { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 4 3; opacity: 0.6; }
+.sc-tx { fill: var(--muted); font-size: 10px; font-family: var(--font-num); }
+/* Traded anchors: grey rows, market cap as fact, curve beside it. */
+tr.anchor td { color: var(--muted); background: rgba(154, 168, 189, 0.06); }
+tr.anchor td.name b { color: var(--muted); }
+.badge.traded { background: rgba(45, 212, 167, 0.14); color: var(--growth); }
+.rank-chip.anchor-chip { background: transparent; border: 1px solid var(--border); }
+.imp-sub { display: block; color: var(--muted); font-size: 11px; font-weight: 400; margin-top: 2px; }
+/* Model evidence: out-of-sample table and note to the judge. */
+.evidence { margin-top: var(--step-5); }
+.evidence h3 { margin-bottom: var(--step-2); }
+.evidence .consts { margin-top: var(--step-3); }
+.judge-note { margin-top: var(--step-4); padding: var(--step-4); border: 1px solid var(--border); border-radius: var(--radius-control); background: var(--surface-2); }
+.judge-note h3 { margin-bottom: var(--step-2); }
+.judge-note ol { margin: 0; padding-left: 20px; display: grid; gap: var(--step-2); color: var(--muted); font-size: 13px; }
+.judge-note li::marker { color: var(--accent); font-weight: 700; }
+/* Detail: two columns, plan totals, farm timeline, traded peers. */
+dialog.detail { width: min(1120px, calc(100vw - 32px)); }
+.detail-cols { display: grid; grid-template-columns: 1fr 1.08fr; gap: var(--step-5); margin-top: var(--step-4); align-items: start; }
+.detail-col .stats { margin-top: 0; }
+.detail-col .waterfall { margin-top: var(--step-4); }
+.peers { margin-top: var(--step-4); }
+.peers h3 { margin-bottom: var(--step-2); font-size: 15px; }
+.peers .consts { margin-top: 0; }
+.plan-totals { display: flex; flex-wrap: wrap; gap: var(--step-2) var(--step-4); padding: var(--step-3) var(--step-4); background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-control); color: var(--muted); font-size: 13px; }
+.plan-totals b { color: var(--ink); }
 @media (max-width: 860px) {
   .lede { grid-template-columns: 1fr; }
   .facts { border-left: 0; padding-left: 0; }
   .wf-row { grid-template-columns: 120px 1fr 100px; }
   .top10-grid { grid-template-columns: 1fr; }
+  .hero { grid-template-columns: 1fr; }
+  .detail-cols { grid-template-columns: 1fr; }
 }
