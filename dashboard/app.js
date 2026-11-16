@@ -279,8 +279,8 @@
     var cats = new Set(DATA.rows.map(function (r) { return r.category || 'Other'; })).size;
     return el('section', { class: 'lede' },
       el('div', null,
-        el('p', { text: 'A launch radar, not a prediction: what a token would be worth if a protocol’s record stayed as it is, and how to farm it before or after it issues one. Every row is scored by one function of the snapshot’s own figures — TVL, seven-day growth, age with no token, and how many chains it runs on — and no protocol name is special-cased.' }),
-        el('p', { text: 'The watchlist is the floor, never the ceiling: the board covers all 40 of its protocols, then every other launch candidate the snapshot’s ten fields can name — 138 below the $50M floor and 20 more above it that the watchlist leaves out. The snapshot carries no parent-protocol field, so the board’s rule is the watchlist rule as far as the file can express it.' })),
+        el('p', { text: 'A launch radar, not a prediction: what a token would be worth if a protocol’s record stayed as it is. Every row is scored by one function of the snapshot’s own figures — TVL, seven-day growth, age with no token, and chain count — and no name is special-cased. Each row also carries a seven-step farm plan.' }),
+        el('p', { text: 'The watchlist is the floor, never the ceiling: the board covers all 40 of its protocols, then every other launch candidate the snapshot can name — 138 below the $50M floor and 20 more above it. The snapshot carries no parent-protocol field, so the board applies the watchlist rule as far as the file can express it.' })),
       el('div', { class: 'facts' },
         el('div', { class: 'fact' }, el('span', { text: 'Protocols ranked' }), el('b', { text: String(DATA.board_size) })),
         el('div', { class: 'fact' }, el('span', { text: 'Watchlist / early' }), el('b', { text: DATA.watchlist_size + ' / ' + DATA.early_size })),
@@ -326,8 +326,36 @@
       el('div', { class: 'field' }, el('span', { class: 'sub', text: 'View' }), el('div', { class: 'tabs' }, tabBtn('board', 'Board'), tabBtn('live', 'Live token'), tabBtn('model', 'Model'))),
       el('span', { class: 'count', text: state.tab === 'model' ? 'Model ' + DATA.model_version + ' · ' + DATA.board_size + ' protocols scored' : sandboxActive() && state.tab === 'board' ? shown + ' rows shown · sandbox ranking' : shown + ' rows shown' }));
   }
-  function sortHeader(key, label) {
-    return el('th', { scope: 'col', class: key === 'implied' || key === 'tvl' || key === 'growth' || key === 'age' ? 'num' : null },
+  // Top 10 strip: the board's visual summary, log scale, rows open the detail view.
+  function top10(ranks) {
+    var list = sortedRows(DATA.rows, ranks).slice(0, 10);
+    if (list.length === 0) return null;
+    var vals = list.map(function (r) { return Math.max(1, valueOf(r)); });
+    var lo = Math.log10(Math.min.apply(null, vals));
+    var hi = Math.log10(Math.max.apply(null, vals));
+    function width(v) {
+      var w = hi > lo ? (Math.log10(Math.max(1, v)) - lo) / (hi - lo) : 1;
+      return Math.round(15 + w * 85);
+    }
+    var rows = list.map(function (r) {
+      var rank = rankOf(r, ranks);
+      return el('div', {
+        class: 'top10-row', tabindex: '0', role: 'button',
+        onclick: function () { openDetail(r.slug); },
+        onkeydown: function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openDetail(r.slug); } },
+      },
+        el('span', { class: 'rank-chip' + (rank === 1 ? ' r1' : rank === 2 ? ' r2' : rank === 3 ? ' r3' : ''), text: String(rank) }),
+        el('span', { class: 't10-name', text: r.name }),
+        el('span', { class: 't10-val', text: fmtUsd(valueOf(r)) }),
+        el('div', { class: 'top10-bar' }, el('i', { style: 'width:' + width(valueOf(r)) + '%' })));
+    });
+    return el('section', { class: 'top10', 'aria-label': 'Top 10 by implied value' },
+      el('div', { class: 'top10-head' },
+        el('h2', { text: 'Top 10 by implied value' }),
+        el('span', { text: sandboxActive() ? 'Sandbox ranking · log scale' : 'Log scale · select a row for its detail view' })),
+      el('div', { class: 'top10-grid' }, rows));
+  }
+  function sortHeader(key, label) {    return el('th', { scope: 'col', class: key === 'implied' || key === 'tvl' || key === 'growth' || key === 'age' ? 'num' : null },
       el('button', { class: 'sort-btn', type: 'button', onclick: function () { if (state.sort === key) state.dir = -state.dir; else { state.sort = key; state.dir = -1; } writeHash(); render(); } },
         el('span', { text: label }),
         state.sort === key ? el('span', { 'aria-hidden': 'true', text: state.dir < 0 ? ' ↓' : ' ↑' }) : null));
@@ -340,23 +368,32 @@
         el('p', { text: 'Loosen the search, the category, the chain or the TVL floor.' }),
         el('button', { class: 'button primary', type: 'button', text: 'Clear filters', onclick: function () { state.q = ''; state.category = 'all'; state.chain = 'all'; state.watchOnly = false; state.minTvl = 0; writeHash(); render(); } })));
     }
+    var impVals = DATA.rows.map(function (r) { return Math.max(1, valueOf(r)); });
+    var impLo = Math.log10(Math.min.apply(null, impVals));
+    var impHi = Math.log10(Math.max.apply(null, impVals));
+    function impWidth(v) {
+      var w = impHi > impLo ? (Math.log10(Math.max(1, v)) - impLo) / (impHi - impLo) : 1;
+      return Math.round(12 + w * 88);
+    }
     var bodyRows = list.map(function (r) {
       var g = r.change_7d;
+      var rk = rankOf(r, ranks);
       return el('tr', {
         'data-slug': r.slug, tabindex: '0',
         onclick: function () { openDetail(r.slug); },
         onkeydown: function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openDetail(r.slug); } },
       },
-        el('td', { class: 'num', text: String(rankOf(r, ranks)) }),
+        el('td', { class: 'num' }, el('span', { class: 'rank-chip' + (rk === 1 ? ' r1' : rk === 2 ? ' r2' : rk === 3 ? ' r3' : ''), text: String(rk) })),
         el('td', { class: 'name' }, el('b', { text: r.name }),
           r.watchlist ? el('span', { class: 'badge', text: 'Watchlist' }) : null,
           el('span', { text: r.slug })),
         el('td', { text: r.category || 'Other' }),
         el('td', { text: (r.chains || []).slice(0, 3).join(', ') + ((r.chains || []).length > 3 ? ' +' + ((r.chains || []).length - 3) : '') }),
         el('td', { class: 'num', text: fmtUsd(r.tvl_usd) }),
-        el('td', { class: 'num ' + (g === null ? '' : g >= 0 ? 'pos' : 'neg'), text: fmtPct(g) }),
+        el('td', { class: 'num ' + (g === null ? '' : g >= 0 ? 'pos' : 'neg'), text: g === null ? 'n/a' : (g >= 0 ? '▲ ' : '▼ ') + fmtPct(g) }),
         el('td', { class: 'num', text: fmtAge(r.age_days) }),
-        el('td', { class: 'num', text: fmtUsd(valueOf(r)) }));
+        el('td', { class: 'num' }, el('span', { class: 'imp', text: fmtUsd(valueOf(r)) }),
+          el('span', { class: 'imp-bar' }, el('i', { style: 'width:' + impWidth(valueOf(r)) + '%' }))));
     });
     return el('div', { class: 'panel' }, el('div', { class: 'table-wrap' },
       el('table', null,
@@ -413,6 +450,13 @@
       el('input', { type: 'checkbox', checked: sandbox.breadth ? 'checked' : null }),
       document.createTextNode('Count extra chains (+2% each, up to 5)'));
     breadth.querySelector('input').addEventListener('change', function (e) { sandbox.breadth = e.target.checked; render(); });
+    var tierLabels = ['TVL under $100M', 'TVL under $1B', 'TVL under $5B', 'TVL above $5B'];
+    var tierMax = Math.max.apply(null, m.base_tiers);
+    var tierRows = m.base_tiers.map(function (v, i) {
+      return el('div', { class: 'wf-row' }, el('span', { text: tierLabels[i] }),
+        el('div', { class: 'wf-bar' }, el('i', { style: 'width:' + Math.round((v / tierMax) * 100) + '%' })),
+        el('b', { text: 'x' + v.toFixed(2) }));
+    });
     return el('section', { class: 'panel method' },
       el('h2', { text: 'The model, and a sandbox to argue with it' }),
       el('p', { text: 'Model ' + DATA.model_version + ': implied = TVL × base multiple × growth multiplier × maturity multiplier × breadth multiplier. The base multiple steps down as TVL grows — 0.45 under $100M, 0.35 under $1B, 0.28 under $5B, 0.22 above — because a token’s value per dollar of TVL compresses as a protocol grows. Growth is the seven-day TVL change, clamped to −50%…+150% and weighted 0.6. Maturity rises from 0.55 for a newborn to 1.00 after four years with no token; an unknown age counts as 365 days. Breadth adds 2% per extra chain, up to five.' }),
@@ -424,6 +468,9 @@
           el('tr', null, el('td', { text: 'Maturity floor, full maturity' }), el('td', { text: '0.55, 1,460 days' })),
           el('tr', null, el('td', { text: 'Unknown age counts as' }), el('td', { text: '365 days' })),
           el('tr', null, el('td', { text: 'Breadth per extra chain, cap' }), el('td', { text: '+2%, 5 chains' })))),
+      el('div', { class: 'waterfall' },
+        el('h3', { text: 'Base multiple steps down as TVL grows' }),
+        tierRows),
       calibration,
       el('div', { class: 'sandbox' },
         slider('sb-base', 'Base multiple scale', 0.5, 1.5, 0.05, sandbox.baseScale, function (v) { return 'x' + v.toFixed(2); }, function (v) { sandbox.baseScale = v; }),
@@ -449,9 +496,11 @@
     var afterMaturity = afterGrowth * row.maturity_multiplier;
     // Bars are scaled to the largest of the four values, so a bar's length is the value it stands for.
     var wfMax = Math.max(base, afterGrowth, afterMaturity, row.implied_value_usd);
-    function wfRow(label, value, amount) {
+    function wfRow(label, value, amount, cls) {
+      var bar = el('i', { style: 'width:' + Math.max(2, Math.round((amount / wfMax) * 100)) + '%' });
+      if (cls) bar.className = cls;
       return el('div', { class: 'wf-row' }, el('span', { text: label }),
-        el('div', { class: 'wf-bar' }, el('i', { style: 'width:' + Math.max(2, Math.round((amount / wfMax) * 100)) + '%' })),
+        el('div', { class: 'wf-bar' }, bar),
         el('b', { text: value }));
     }
     // Say so when the row's own figures are not the ones the model used: a
@@ -483,16 +532,17 @@
       el('div', { class: 'stats' },
         el('div', { class: 'stat' }, el('span', { text: 'Board rank' }), el('b', { text: '#' + row.rank })),
         el('div', { class: 'stat' }, el('span', { text: 'Implied value' }), el('b', { text: fmtUsd(row.implied_value_usd) })),
+        el('div', { class: 'stat' }, el('span', { text: 'Implied / TVL' }), el('b', { text: 'x' + (row.implied_value_usd / row.tvl_usd).toFixed(2) })),
         el('div', { class: 'stat' }, el('span', { text: 'TVL' }), el('b', { text: fmtUsd(row.tvl_usd) })),
         el('div', { class: 'stat' }, el('span', { text: '7-day change' }), el('b', { class: row.change_7d === null ? '' : row.change_7d >= 0 ? 'pos' : 'neg', text: fmtPct(row.change_7d) })),
         el('div', { class: 'stat' }, el('span', { text: 'Age with no token' }), el('b', { text: fmtAge(row.age_days) })),
         el('div', { class: 'stat' }, el('span', { text: 'Chains' }), el('b', { text: String((row.chains || []).length) }))),
       el('div', { class: 'waterfall' },
         el('h3', { text: 'How the implied value is built' }),
-        wfRow('TVL × base ' + fmtMult(row.base_multiple), fmtUsd(base), base),
-        wfRow('× growth ' + fmtMult(row.growth_multiplier), fmtUsd(afterGrowth), afterGrowth),
-        wfRow('× maturity ' + fmtMult(row.maturity_multiplier), fmtUsd(afterMaturity), afterMaturity),
-        wfRow('× breadth ' + fmtMult(row.breadth_multiplier), fmtUsd(row.implied_value_usd), row.implied_value_usd),
+        wfRow('TVL × base ' + fmtMult(row.base_multiple), fmtUsd(base), base, 'dim'),
+        wfRow('× growth ' + fmtMult(row.growth_multiplier), fmtUsd(afterGrowth), afterGrowth, row.growth_multiplier >= 1 ? 'pos' : 'neg'),
+        wfRow('× maturity ' + fmtMult(row.maturity_multiplier), fmtUsd(afterMaturity), afterMaturity, null),
+        wfRow('× breadth ' + fmtMult(row.breadth_multiplier), fmtUsd(row.implied_value_usd), row.implied_value_usd, 'pos'),
         el('div', { class: 'wf-total' }, el('span', { text: 'Implied value' }), el('b', { text: fmtUsd(row.implied_value_usd) })),
         wfNote ? el('p', { class: 'sandbox-note', text: wfNote }) : null,
         el('p', { class: 'sandbox-note', text: 'Model ' + DATA.model_version + ': the page recomputes this row as ' + fmtUsd(check) + (check === row.implied_value_usd ? ', the same number board.json carries.' : ', which differs from the board: the data would be stale.') + ' This is an estimate, not a price.' })),
@@ -513,6 +563,7 @@
   function render() {
     var ranks = sandboxActive() ? sandboxRanks() : {};
     var shell = el('div', { class: 'shell' }, header(), lede(), controls(ranks));
+    if (state.tab === 'board') shell.appendChild(top10(ranks));
     if (state.tab === 'live') shell.appendChild(liveTable());
     else if (state.tab === 'model') shell.appendChild(modelPanel());
     else shell.appendChild(boardTable(ranks));
