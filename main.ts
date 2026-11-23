@@ -1,4 +1,11 @@
-// Token Radar, model radar-2 (Node 22, standard library only).
+// Token Radar, model radar-3 (Node 22, standard library only).
+//
+// radar-3 fits its value curve at run time: log10(mcap/TVL) = a + b*log10(TVL)
+// by OLS on the snapshot's 128 traded protocols, then picks its growth,
+// maturity and breadth adjustments by a 48-combination grid search on five
+// held-out folds. Nothing about the model is hand-set; lib/model.ts reports
+// the fit, the grid, the ablation, the ledger and the calibration, and the
+// dashboard renders them from data.js.
 //
 // Reads the sealed snapshot from /input/snapshot.json (or --input <file|dir>),
 // scores every launch candidate with lib/model.ts, writes the ranked board to
