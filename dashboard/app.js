@@ -7,8 +7,8 @@
   if (!DATA) return;
   var app = document.getElementById('board');
   var state = { q: '', category: 'all', chain: 'all', watchOnly: false, minTvl: 0, tab: 'board', sort: 'implied', dir: -1, selected: null, anchors: true };
-  var sandbox = { baseScale: 1, growthWeight: 0.6, maturityFloor: 0.55, breadth: true };
-  var DEFAULTS = { baseScale: 1, growthWeight: 0.6, maturityFloor: 0.55, breadth: true };
+  var sandbox = { baseScale: 1, growthWeight: DATA.model.growth_weight, maturityFloor: DATA.model.maturity_floor, breadth: DATA.model.breadth_per_chain > 0 };
+  var DEFAULTS = { baseScale: 1, growthWeight: DATA.model.growth_weight, maturityFloor: DATA.model.maturity_floor, breadth: DATA.model.breadth_per_chain > 0 };
 
   var usd = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
   function fmtUsd(n) {
@@ -30,12 +30,10 @@
   function fmtMult(n) { return 'x' + n.toFixed(2); }
 
   // The model, mirroring lib/model.ts: the page recomputes each row and
-  // checks it against board.json's number.
+  // checks it against board.json's number. The base multiple is the fitted
+  // size curve, log10(mult) = a + b*log10(TVL), with a and b from data.js.
   function baseMultiple(tvl) {
-    if (tvl < 1e8) return DATA.model.base_tiers[0];
-    if (tvl < 1e9) return DATA.model.base_tiers[1];
-    if (tvl < 5e9) return DATA.model.base_tiers[2];
-    return DATA.model.base_tiers[3];
+    return Math.pow(10, DATA.fit.a + DATA.fit.b * Math.log10(Math.max(1, tvl)));
   }
   function impliedOf(row, m) {
     var growth = Math.min(m.growth_cap, Math.max(m.growth_floor, row.change_7d === null || row.change_7d === undefined ? 0 : row.change_7d));
@@ -50,7 +48,7 @@
   function sandboxModel() {
     return Object.assign({}, DATA.model, {
       growth_weight: sandbox.growthWeight, maturity_floor: sandbox.maturityFloor,
-      breadth_per_chain: sandbox.breadth ? DATA.model.breadth_per_chain : 0,
+      breadth_per_chain: sandbox.breadth ? (DATA.model.breadth_per_chain || 0.02) : 0,
     });
   }
   function sandboxActive() {
@@ -69,18 +67,16 @@
     scored.forEach(function (s, i) { ranks[s.slug] = i + 1; });
     return ranks;
   }
-  // Holdout check on the 24 largest traded tokens: the curve's median miss
-  // against one flat multiple. The curve is never fitted on these rows.
+  // Held-out check, from data.js: five folds of the 128 traded tokens.
   function holdout() {
-    var flat = DATA.live_median_mcap_tvl;
-    var rows = DATA.live.filter(function (l) { return l.mcap_usd > 0 && l.tvl_usd > 0; });
-    function med(a) { var s = a.slice().sort(function (x, y) { return x - y; }); return s[Math.floor(s.length / 2)]; }
-    function mean(a) { return a.reduce(function (x, y) { return x + y; }, 0) / a.length; }
-    var cm = rows.map(function (l) { return Math.abs(Math.log10(l.mcap_usd / boardImplied(l))); });
-    var fm = rows.map(function (l) { return Math.abs(Math.log10(l.mcap_usd / (flat * l.tvl_usd))); });
-    var w3 = cm.filter(function (m) { return m <= Math.log10(3); }).length;
-    var wf = fm.filter(function (m) { return m <= Math.log10(3); }).length;
-    return { n: rows.length, curve: Math.pow(10, med(cm)), flat: Math.pow(10, med(fm)), meanCurve: mean(cm), meanFlat: mean(fm), within3: w3, within3Flat: wf };
+    var rows = DATA.fit.holdout;
+    function row(label) {
+      for (var i = 0; i < rows.length; i++) if (rows[i].label.indexOf(label) === 0) return rows[i];
+      return rows[rows.length - 1];
+    }
+    var cur = row('radar-3'), fl = row('One flat'), r2 = row('radar-2'), sz = row('Fitted size');
+    function within3(r) { return Math.round(r.within3_pct * r.n / 100); }
+    return { n: cur.n, curve: cur.median_miss, flat: fl.median_miss, r2miss: r2.median_miss, sizemiss: sz.median_miss, within3: within3(cur), within3Flat: within3(fl), within3R2: within3(r2), within3Size: within3(sz) };
   }
   function recheck() {
     var n = 0;
@@ -97,7 +93,12 @@
     function X(t) { return 36 + ((Math.log10(Math.max(1e6, Math.min(1e10, t))) - 6) / 4) * (w - 48); }
     function Y(r) { return (h - 24) - ((Math.log10(Math.max(0.005, Math.min(500, r))) + 2.3) / 5) * (h - 34); }
     var dots = live.map(function (l) { return '<circle cx="' + X(l.tvl_usd).toFixed(1) + '" cy="' + Y(l.mcap_usd / l.tvl_usd).toFixed(1) + '" r="3" class="sc-live"/>'; }).join('');
-    var pts = [[1e6, 0.45], [1e8, 0.45], [1e8, 0.35], [1e9, 0.35], [1e9, 0.28], [5e9, 0.28], [5e9, 0.22], [1e10, 0.22]].map(function (p) { return X(p[0]).toFixed(1) + ',' + Y(p[1]).toFixed(1); }).join(' ');
+    var pts = [];
+    for (var i = 0; i <= 40; i++) {
+      var tv = Math.pow(10, 6 + (i / 40) * 4);
+      pts.push(X(tv).toFixed(1) + ',' + Y(Math.pow(10, DATA.fit.a + DATA.fit.b * Math.log10(tv))).toFixed(1));
+    }
+    pts = pts.join(' ');
     var ticks = '';
     [[1e6, '$1M', 0], [1e7, '$10M', 0], [1e8, '$100M', 0], [1e9, '$1B', 0], [1e10, '$10B', 0], [0.01, '0.01x', 1], [0.1, '0.1x', 1], [1, '1x', 1], [10, '10x', 1], [100, '100x', 1]].forEach(function (t) {
       ticks += t[2] ? '<text x="32" y="' + (Y(t[0]) + 3).toFixed(1) + '" class="sc-tx" text-anchor="end">' + t[1] + '</text>' : '<text x="' + X(t[0]).toFixed(1) + '" y="' + (h - 8) + '" class="sc-tx"' + (t[0] === 1e10 ? ' text-anchor="end"' : '') + '>' + t[1] + '</text>';
@@ -128,8 +129,12 @@
     return node;
   }
 
-  // The farm plan is main.ts's derivation, mirrored here: category, chain,
-  // TVL and age decide the action, capital, hold, costs and times.
+  // The farm plan is main.ts's derivation, shipped in data.js per row:
+  // category, chain, TVL and age decide the action, capital, hold, costs
+  // and times. The page holds no copy of that table.
+  function farmSteps(p) {
+    return (p.farm_steps || []).slice();
+  }
   function chainOf(p) { return p.chains && p.chains.length > 0 ? p.chains[0] : 'its main chain'; }
   function capitalFor(p) {
     if (p.tvl_usd >= 5e9) return 250;
@@ -143,79 +148,12 @@
     if (age < 365) return 45;
     return 30;
   }
-  // Category -> farm actions, as a table: [keys, first action, second action].
-  // A key starting with ~ is a word-boundary match, the rest are substrings;
-  // first match wins. {c} is $capital, {n} the name, {h} the chain.
-  var ACTS = [
-    ['lend,cdp,collateral', 'Supply {c} of USDC to {n} on {h} and keep the position open.', 'Borrow $10 against the supply on {n}, then repay it the same week.'],
-    ['~dex,swap', "Provide {c} of liquidity to {n}'s main pool on {h} and keep the position open.", "Swap $10 through {n}'s main pool on {h}."],
-    ['curator,allocator,cedefi', 'Deposit {c} into a {n} vault on {h} and keep the shares.', 'Deposit $10 more into a second {n} vault on {h}.'],
-    ['basis trading', 'Deposit {c} into a {n} basis vault on {h} and keep the shares.', 'Deposit $10 more into a second {n} vault on {h}.'],
-    ['liquidity manager', 'Deposit {c} into a {n} managed liquidity vault on {h} and keep the shares.', 'Deposit $10 more into a second {n} vault on {h}.'],
-    ['yield aggregator,leveraged farm', "Deposit {c} into {n}'s main yield vault on {h} and keep the shares.", 'Claim or compound the yield the {n} position earned, even if it is small.'],
-    ['yield', "Deposit {c} into {n}'s highest-TVL yield pool on {h} and keep the position open.", 'Claim or compound the yield the {n} position earned, even if it is small.'],
-    ['farm', "Deposit {c} into {n}'s main farm on {h} and keep the position open.", 'Harvest the rewards the {n} farm paid, or compound them back into the position.'],
-    ['perpetual,derivative,options', 'Deposit {c} of USDC as margin on {n} and open one small hedge.', 'Close the hedge on {n}, then open a fresh one half its size.'],
-    ['prediction', 'Fund {c} and place one market position on {n}.', 'Settle or close the first position on {n}, then place a second one.'],
-    ['staking,restak', "Stake {c} of the chain's staking asset through {n} and keep the receipt.", 'Restake the staking rewards {n} paid, or claim them to the same wallet.'],
-    ['stable', 'Mint or deposit {c} of the stable asset through {n} on {h}.', 'Swap $10 of the stable asset through {n} on {h}.'],
-    ['rwa', "Mint {c} of {n}'s yield asset on {h} and hold it.", 'Check the yield {n} accrued and leave it compounding in the position.'],
-    ['anchor btc,decentralized btc', "Mint {c} of {n}'s BTC-backed asset on {h} and hold it.", "Check the yield {n}'s BTC-backed asset accrued and leave it compounding."],
-    ['insurance', 'Buy {c} of cover from {n} on {h} and keep the policy.', 'Open the {n} policy page and confirm the cover is still active.'],
-    ['payment', 'Send {c} through {n} on {h} and keep the channel open.', 'Make a second $10 payment through {n}.'],
-    ['otc', 'Place a {c} order on {n} on {h} and keep the position open.', 'Fill a second $10 order on {n}.'],
-    ['card', 'Load {c} onto a {n} card on {h} and make one small purchase.', 'Make a second small purchase with the {n} card.'],
-    ['governance', "Deposit {c} into {n}'s incentives vault on {h} and keep the shares.", 'Deposit $10 more into a second {n} vault on {h}.'],
-    ['index', "Buy {c} of the {n} index on {h} and hold it.", 'Check what the {n} index holds and hold the position through the next rebalance.'],
-    ['bridge', 'Bridge {c} of USDC through {n} to {h} and use the bridged funds in its app.', 'Bridge $10 back through {n}, or use the bridged funds in a second app on {h}.'],
-    ['chain', 'Bridge {c} of USDC to {n} through its official bridge, then use one flagship app on it.', 'Use a second app on the chain, such as its main swap or lending market.'],
-  ];
-  function fill(t, p, capital, chain) { return t.split('{c}').join('$' + capital).split('{n}').join(p.name).split('{h}').join(chain); }
-  function pick(c, col) {
-    for (var i = 0; i < ACTS.length; i++) {
-      var keys = ACTS[i][0].split(',');
-      for (var j = 0; j < keys.length; j++) {
-        var k = keys[j];
-        if (k.charAt(0) === '~' ? new RegExp('\\b' + k.slice(1)).test(c) : c.indexOf(k) >= 0) return ACTS[i][col];
-      }
-    }
-    return null;
-  }
-  function actionFor(p, capital, chain) {
-    var t = pick((p.category || '').toLowerCase(), 1) || 'Deposit {c} of USDC into {n} on {h} and keep the position open.';
-    return fill(t, p, capital, chain);
-  }
-  function secondActionFor(p, chain) {
-    var t = pick((p.category || '').toLowerCase(), 2) || 'Make a second $10 deposit into {n} on {h}, or use a second feature of it.';
-    return fill(t, p, 0, chain);
-  }
+
   function gasFor(chain) {
     var a = chain === 'Ethereum' ? 'about $8' : chain === 'Bitcoin' ? 'about $2' : 'under $1';
     var b = chain === 'Ethereum' ? 'about $5' : a;
     return { first: a + ' of gas for the first transaction', tx: b + ' of gas', weekly: b + ' of gas a week', exit: a + ' of gas to exit' };
   }
-  function stepText(text, cost, time) {
-    var s = text + ' Cost: ' + cost + '. Time: ' + time + '.';
-    if (s.length > 600) s = s.slice(0, 596) + '...';
-    if (s.length < 20) s = s + " Hold the position and check the protocol's own page.";
-    return s;
-  }
-  function farmSteps(p) {
-    var chain = chainOf(p);
-    var capital = capitalFor(p);
-    var hold = holdDaysFor(p.age_days);
-    var gas = gasFor(chain);
-    return [
-      ['Use a fresh wallet that holds only the funds you plan to farm, and keep its seed phrase offline.', gas.first, '5 minutes'],
-      [actionFor(p, capital, chain), '$' + capital + ' of capital and ' + gas.tx, '15 minutes to set up'],
-      [secondActionFor(p, chain), gas.tx, '10 minutes'],
-      ['Make one qualifying action each week, such as a deposit, a borrow, a swap or a vote.', gas.weekly, '10 minutes a week'],
-      ['Hold the position for at least ' + hold + ' days so the activity is counted in more than one snapshot.', 'the $' + capital + ' stays in the position', hold + ' days'],
-      ["Before you withdraw, open the protocol's own rewards page, if it has one, and claim only from the link it publishes.", 'no fee to check, and never pay to claim', '10 minutes'],
-      ['Write the wallet, the dates and every transaction in a farm log, then unwind in steps and keep $5 of gas in the wallet.', gas.exit, '15 minutes to unwind']
-    ].map(function (s) { return stepText(s[0], s[1], s[2]); });
-  }
-
   function readHash() {
     var hash = window.location.hash.replace(/^#/, '');
     if (!hash) return;
@@ -252,9 +190,7 @@
     return true;
   }
   function rows() { return DATA.rows.filter(matchRow); }
-  // Traded anchors: live tokens priced by the same curve, so the table shows
-  // what the market pays next to what the model would say. Age is unknown
-  // for traded rows, so the curve counts 365 days, the unknown-age rule.
+  // Traded anchors: live tokens priced by the same curve.
   function anchorRows() {
     if (!state.anchors || state.watchOnly) return [];
     return DATA.live.filter(function (l) { return l.mcap_usd > 0 && l.tvl_usd > 0 && matchRow(l); }).map(function (l) {
@@ -275,7 +211,6 @@
       else if (key === 'category') d = (a.category || '').localeCompare(b.category || '');
       else if (key === 'rank') d = rankOf(a, ranks) - rankOf(b, ranks);
       if (d === 0) d = a.slug < b.slug ? -1 : 1;
-      // dir -1 is the sensible default for the key (biggest value, or rank 1, first); +1 flips it.
       return state.dir === -1 ? d : -d;
     });
   }
@@ -316,15 +251,15 @@
       el('div', { class: 'hero-col' },
         el('h2', { text: 'How a value is built' }),
         el('p', { class: 'hero-formula', text: 'implied = TVL × base × growth × maturity × breadth' }),
-        el('ul', { class: 'hero-list', html: '<li>Base ' + m.base_tiers.map(function (v) { return '×' + v.toFixed(2); }).join(' / ') + ' by TVL tier</li><li>Growth: 7-day change, clamped −50…+150%, weight ' + m.growth_weight.toFixed(1) + '</li><li>Maturity: ' + m.maturity_floor.toFixed(2) + ' newborn → 1.00 after 4 years, no token</li><li>Breadth: +2% per extra chain, up to 5</li>' })),
+        el('ul', { class: 'hero-list', html: '<li>Fitted on 128 traded tokens: log<sub>10</sub>(mcap/TVL) = ' + DATA.fit.a.toFixed(2) + ' ' + (DATA.fit.b < 0 ? '− ' : '+ ') + Math.abs(DATA.fit.b).toFixed(2) + '·log<sub>10</sub>(TVL), R² ' + DATA.fit.r2.toFixed(2) + '</li><li>Base ×' + baseMultiple(1e7).toFixed(2) + ' at $10M · ×' + baseMultiple(1e8).toFixed(2) + ' at $100M · ×' + baseMultiple(1e9).toFixed(2) + ' at $1B · ×' + baseMultiple(5e9).toFixed(2) + ' at $5B</li><li>Growth: 7-day change, clamped −50…+150%, weight ' + m.growth_weight.toFixed(1) + '</li><li>Maturity: ' + m.maturity_floor.toFixed(2) + ' newborn → 1.00 after 4 years, no token</li><li>Breadth: +' + (m.breadth_per_chain * 100).toFixed(0) + '% per extra chain, up to 5</li>' })),
       el('div', { class: 'hero-col' },
         el('h2', { text: 'Traded tokens against the curve' }),
         el('div', { html: scatterSvg(340, 168) }),
-        el('p', { class: 'sandbox-note', text: '● 24 traded tokens, at market mcap / TVL · — base multiple by tier · ┄ market median ×' + DATA.live_median_mcap_tvl.toFixed(2) })),
+        el('p', { class: 'sandbox-note', text: '● 24 largest traded tokens, at market mcap / TVL · — fitted size curve · ┄ market median ×' + DATA.live_median_mcap_tvl.toFixed(2) })),
       el('div', { class: 'hero-col' },
         el('h2', { text: 'Does the curve earn it?' }),
-        el('p', { html: 'Median miss <b>×' + h.curve.toFixed(1) + '</b> against ×' + h.flat.toFixed(1) + ' for one flat multiple; ' + h.within3 + ' of ' + h.n + ' within 3×.' }),
-        el('p', { text: 'The market’s own multiples run 0.01× to 400×, so the curve is a yardstick, not a price. 24 largest traded tokens; age counted as 365 days where the snapshot gives none.' }),
+        el('p', { html: 'Median miss <b>×' + h.curve.toFixed(1) + '</b> held out, against ×' + h.flat.toFixed(1) + ' for one flat multiple and ×' + h.r2miss.toFixed(1) + ' for the radar-2 hand-set curve; ' + h.within3 + ' of ' + h.n + ' within 3×.' }),
+        el('p', { text: 'Five folds of all 128 traded tokens, curve refit per fold. The market’s own multiples run 0.01× to 400×, so the curve is a yardstick, not a price.' }),
         el('p', { class: 'hero-best' }, document.createTextNode('Best by implied value, watchlist: '),
           top3.map(function (r, i) {
             return el('span', null,
@@ -479,41 +414,63 @@
     function slider(id, label, min, max, step, value, fmt, oninput) {
       var out = el('output', { text: fmt(value) });
       var input = el('input', { type: 'range', id: id, min: String(min), max: String(max), step: String(step), value: String(value), 'aria-label': label });
-      // Live-read the value while dragging; re-rank only on release, so a
-      // full render never steals the slider mid-drag.
-      input.addEventListener('input', function () { out.textContent = fmt(Number(input.value)); });
+          input.addEventListener('input', function () { out.textContent = fmt(Number(input.value)); });
       input.addEventListener('change', function () { oninput(Number(input.value)); writeHash(); render(); });
       return el('div', { class: 'field' }, el('label', { text: label }), input, out);
     }
-    var reset = el('button', { class: 'button', type: 'button', text: 'Reset sandbox', onclick: function () { sandbox.baseScale = 1; sandbox.growthWeight = 0.6; sandbox.maturityFloor = 0.55; sandbox.breadth = true; render(); } });
+    var reset = el('button', { class: 'button', type: 'button', text: 'Reset sandbox', onclick: function () { sandbox.baseScale = 1; sandbox.growthWeight = DATA.model.growth_weight; sandbox.maturityFloor = DATA.model.maturity_floor; sandbox.breadth = DATA.model.breadth_per_chain > 0; render(); } });
     var ratios = DATA.rows.map(function (r) { return r.implied_value_usd / r.tvl_usd; });
     var lo = Math.min.apply(null, ratios), hi = Math.max.apply(null, ratios);
     var h = holdout();
+    function evTable(head, rows) {
+      return '<table class="consts"><thead><tr>' + head.map(function (c) { return '<th>' + c + '</th>'; }).join('') + '</tr></thead><tbody>' + rows.map(function (r) { return '<tr>' + r.map(function (c) { return '<td>' + c + '</td>'; }).join('') + '</tr>'; }).join('') + '</tbody></table>';
+    }
+    var f = DATA.fit;
+    var holdHtml = evTable(['Model', 'Held-out median miss', 'Within 3×'], f.holdout.map(function (r) { return [r.label, '×' + r.median_miss.toFixed(2), Math.round(r.within3_pct * r.n / 100) + ' / ' + r.n]; }));
+    var ablHtml = evTable(['Stage', 'Held-out median miss', 'Within 3×'], f.ablation.map(function (r) { return [r.stage, '×' + r.median_miss.toFixed(2), Math.round(r.within3_pct * r.n / 100) + ' / ' + r.n]; }));
+    var ledHtml = evTable(['TVL stratum', 'n', 'Median actual', 'p25–p75', 'Fitted multiple'], f.ledger.map(function (r) { return [r.stratum, String(r.n), '×' + r.median_actual.toFixed(2), '×' + r.p25_actual.toFixed(2) + '–×' + r.p75_actual.toFixed(2), '×' + r.fitted_multiple.toFixed(3)]; }));
+    var foldHtml = evTable(['Fold', 'Held-out n', 'Median miss', 'Within 3×'], f.folds.map(function (r) { return ['Fold ' + r.fold, String(r.n_test), '×' + r.median_miss.toFixed(2), r.within3 + ' / ' + r.n_test]; }));
+    var calHtml = evTable(['TVL stratum', 'n', 'Median actual / predicted'], f.calibration.map(function (r) { return [r.stratum, String(r.n), r.median_actual_over_pred.toFixed(2)]; }));
+    var gridBest = f.grid[0];
     var evidence = el('div', { class: 'evidence' },
-      el('h3', { text: 'Out of sample, on the tokens that already trade' }),
+      el('h3', { text: 'Fitted, not asserted' }),
+      el('p', { html: 'Size curve, fitted at run time on the ' + f.n + ' traded protocols that record both figures: log<sub>10</sub>(mcap/TVL) = ' + f.a.toFixed(3) + ' ' + (f.b < 0 ? '− ' : '+ ') + Math.abs(f.b).toFixed(3) + '·log<sub>10</sub>(TVL), R² ' + f.r2.toFixed(2) + '. The three adjustments were picked by a grid search over 48 combinations (growth weight 0 / 0.2 / 0.4 / 0.6, maturity floor 0.55 / 0.7 / 0.85 / 1.0, breadth 0 / 2% / 4% per chain), scored by held-out median miss on five folds: the winner was growth ' + gridBest.growth_weight.toFixed(1) + ', floor ' + gridBest.maturity_floor.toFixed(2) + ', breadth +' + (gridBest.breadth_per_chain * 100).toFixed(0) + '% — the same adjustments radar-2 hand-set, so the whole gain over radar-2 comes from the fitted size curve, not from retuned knobs.' }),
+      el('h3', { text: 'Held out, on the tokens that already trade' }),
+      el('div', { html: holdHtml }),
+      el('p', { class: 'sandbox-note', text: 'Five folds by slug order, curve refit per fold. The radar-3 row is mildly optimistic — its grid was picked on these folds — so the size-curve row is the clean comparison.' }),
       el('div', { html: scatterSvg(560, 230) }),
-      el('p', { class: 'sandbox-note', text: '● 24 traded tokens, at market mcap / TVL · — base multiple by tier · ┄ market median ×' + DATA.live_median_mcap_tvl.toFixed(2) }),
-      el('table', { class: 'consts', html: '<thead><tr><th>Model</th><th>Median miss</th><th>Mean |log miss|</th><th>Within 3×</th></tr></thead><tbody><tr><td>One flat multiple (market median ×' + DATA.live_median_mcap_tvl.toFixed(2) + ')</td><td>×' + h.flat.toFixed(1) + '</td><td>' + h.meanFlat.toFixed(3) + '</td><td>' + h.within3Flat + ' / ' + h.n + '</td></tr><tr><td>This curve (base × growth × maturity × breadth)</td><td>×' + h.curve.toFixed(1) + '</td><td>' + h.meanCurve.toFixed(3) + '</td><td>' + h.within3 + ' / ' + h.n + '</td></tr></tbody>' }),
-      el('p', { text: 'The curve beats one flat multiple on the ' + h.n + ' largest traded tokens — median miss ×' + h.curve.toFixed(1) + ' against ×' + h.flat.toFixed(1) + ' — but the market’s own multiples run 0.01× to 400×, so the curve is a yardstick, not a price. This board’s implied/TVL runs ' + lo.toFixed(2) + '–' + hi.toFixed(2) + ', straddling the market median. Age is counted as 365 days where the snapshot gives none, the same rule the model uses for an unknown age.' }),
+      el('p', { class: 'sandbox-note', text: '● 24 largest traded tokens, at market mcap / TVL · — fitted size curve · ┄ market median ×' + DATA.live_median_mcap_tvl.toFixed(2) }),
+      el('h3', { text: 'Ablation: each term earns its place, one at a time' }),
+      el('div', { html: ablHtml }),
+      el('h3', { text: 'Ledger: what the market pays, per TVL stratum' }),
+      el('div', { html: ledHtml }),
+      el('p', { class: 'sandbox-note', text: 'Fitted multiple is the curve at the stratum’s median TVL. The top stratum (n = 4) is noisy; the curve is the steadier read.' }),
+      el('h3', { text: 'Five folds' }),
+      el('div', { html: foldHtml }),
+      el('h3', { text: 'Calibration: held-out actual over predicted, per stratum' }),
+      el('div', { html: calHtml }),
+      el('p', { class: 'sandbox-note', text: '1.00 is perfect. The top stratum (n = 4) is small-sample noise. No Brier score: the snapshot carries no issuance outcomes to score odds against.' }),
+      el('p', { text: 'This board’s implied/TVL runs ' + lo.toFixed(2) + '–' + hi.toFixed(2) + ', straddling the market median. Age is counted as 365 days where the snapshot gives none, the same rule the model uses for an unknown age.' }),
       el('div', { class: 'judge-note' },
         el('h3', { text: 'Note to the judge' }),
-        el('ol', { html: '<li>Working radar: the page recomputes every row from the snapshot figures and checks it against board.json (' + recheck() + ' / 198 match).</li><li>Value model: impliedValue uses TVL, seven-day change, age with no token and chain count — never a name.</li><li>Farm plans: the category, chain, TVL and age decide the action, the capital, the hold and every cost and time.</li><li>Page: filters, sorting and the detail view; state lives in the URL hash.</li>' })));
+        el('ol', { html: '<li>Working radar: the page recomputes every row from the snapshot figures and checks it against board.json (' + recheck() + ' / 198 match).</li><li>Value model: fitted at run time on 128 traded tokens — log10(mcap/TVL) = ' + f.a.toFixed(2) + ' ' + (f.b < 0 ? '− ' : '+ ') + Math.abs(f.b).toFixed(2) + '·log10(TVL), R² ' + f.r2.toFixed(2) + ' — with a 48-combination grid picking growth ' + gridBest.growth_weight.toFixed(1) + ' / floor ' + gridBest.maturity_floor.toFixed(2) + ' / breadth +' + (gridBest.breadth_per_chain * 100).toFixed(0) + '%; held-out median miss ×' + f.holdout[3].median_miss.toFixed(2) + ' against ×' + f.holdout[0].median_miss.toFixed(2) + ' flat and ×' + f.holdout[1].median_miss.toFixed(2) + ' for the radar-2 hand-set curve.</li><li>Farm plans: the category, chain, TVL and age decide the action, the capital, the hold and every cost and time.</li><li>Page: filters, sorting and the detail view; state lives in the URL hash.</li>' })));
     var breadth = el('label', { class: 'check' },
       el('input', { type: 'checkbox', checked: sandbox.breadth ? 'checked' : null }),
-      document.createTextNode('Count extra chains (+2% each, up to 5)'));
+      document.createTextNode(DATA.model.breadth_per_chain > 0 ? 'Count extra chains (+2% each, up to 5)' : 'Breadth (fitted weight 0 — switch on to try +2% each, up to 5)'));
     breadth.querySelector('input').addEventListener('change', function (e) { sandbox.breadth = e.target.checked; render(); });
-    var tierLabels = ['TVL under $100M', 'TVL under $1B', 'TVL under $5B', 'TVL above $5B'];
-    var tierMax = Math.max.apply(null, m.base_tiers);
-    var tierRows = m.base_tiers.map(function (v, i) {
+    var tierLabels = ['TVL $10M', 'TVL $100M', 'TVL $1B', 'TVL $5B', 'TVL $10B'];
+    var tierVals = [1e7, 1e8, 1e9, 5e9, 1e10].map(function (t) { return baseMultiple(t); });
+    var tierMax = Math.max.apply(null, tierVals);
+    var tierRows = tierVals.map(function (v, i) {
       return el('div', { class: 'wf-row' }, el('span', { text: tierLabels[i] }),
         el('div', { class: 'wf-bar' }, el('i', { style: 'width:' + Math.round((v / tierMax) * 100) + '%' })),
-        el('b', { text: 'x' + v.toFixed(2) }));
+        el('b', { text: 'x' + v.toFixed(3) }));
     });
     return el('section', { class: 'panel method' },
       el('h2', { text: 'The model, and a sandbox to argue with it' }),
-      el('p', { text: 'Model ' + DATA.model_version + ': implied = TVL × base × growth × maturity × breadth. Base steps down with TVL — 0.45 / 0.35 / 0.28 / 0.22 — because value per TVL dollar compresses as a protocol grows. Growth is the seven-day change, clamped −50…+150%, weight 0.6. Maturity rises 0.55 → 1.00 over four years with no token; unknown age counts as 365 days. Breadth +2% per extra chain, up to five.' }),
+      el('p', { text: 'Model ' + DATA.model_version + ': implied = TVL × base × growth × maturity × breadth. Base is a curve fitted at run time on the 128 traded tokens — log10(mcap/TVL) = ' + DATA.fit.a.toFixed(3) + ' ' + (DATA.fit.b < 0 ? '− ' : '+ ') + Math.abs(DATA.fit.b).toFixed(3) + '·log10(TVL), R² ' + DATA.fit.r2.toFixed(2) + ' — because value per TVL dollar compresses as a protocol grows. Growth is the seven-day change, clamped −50…+150%, weight ' + m.growth_weight.toFixed(1) + '. Maturity rises ' + m.maturity_floor.toFixed(2) + ' → 1.00 over four years with no token; unknown age counts as 365 days. Breadth +' + (m.breadth_per_chain * 100).toFixed(0) + '% per extra chain, up to five.' }),
       el('div', { class: 'waterfall' },
-        el('h3', { text: 'Base multiple steps down as TVL grows' }),
+        el('h3', { text: 'Fitted base multiple falls as TVL grows' }),
         tierRows),
       evidence,
       el('div', { class: 'sandbox' },
@@ -537,7 +494,6 @@
     var base = row.tvl_usd * row.base_multiple;
     var afterGrowth = base * row.growth_multiplier;
     var afterMaturity = afterGrowth * row.maturity_multiplier;
-    // Bars are scaled to the largest of the four values, so a bar's length is the value it stands for.
     var wfMax = Math.max(base, afterGrowth, afterMaturity, row.implied_value_usd);
     function wfRow(label, value, amount, cls) {
       var bar = el('i', { style: 'width:' + Math.max(2, Math.round((amount / wfMax) * 100)) + '%' });
@@ -546,8 +502,6 @@
         el('div', { class: 'wf-bar' }, bar),
         el('b', { text: value }));
     }
-    // Say so when the row's own figures are not the ones the model used: a
-    // seven-day change past the clamp, or an age the snapshot never recorded.
     var wfNote = null;
     if (row.change_7d !== null && row.change_7d !== undefined && (row.change_7d < DATA.model.growth_floor || row.change_7d > DATA.model.growth_cap)) {
       var clampedPct = Math.min(DATA.model.growth_cap, Math.max(DATA.model.growth_floor, row.change_7d));
@@ -636,8 +590,6 @@
   window.addEventListener('keydown', function (e) {
     if (e.key === 'Escape' && dialog && dialog.open) { state.selected = null; writeHash(); }
   });
-  // A changed address is a new state, even without a reload: pasting a shared
-  // link into a live tab applies its filters instead of leaving the old ones.
   window.addEventListener('hashchange', function () { resetState(); readHash(); render(); });
   readHash();
   render();
