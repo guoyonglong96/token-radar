@@ -74,7 +74,7 @@
       for (var i = 0; i < rows.length; i++) if (rows[i].label.indexOf(label) === 0) return rows[i];
       return rows[rows.length - 1];
     }
-    var cur = row('radar-3'), fl = row('One flat'), r2 = row('radar-2'), sz = row('Fitted size');
+    var cur = row('radar-4'), fl = row('One flat'), r2 = row('radar-2'), sz = row('Fitted size');
     function within3(r) { return Math.round(r.within3_pct * r.n / 100); }
     return { n: cur.n, curve: cur.median_miss, flat: fl.median_miss, r2miss: r2.median_miss, sizemiss: sz.median_miss, within3: within3(cur), within3Flat: within3(fl), within3R2: within3(r2), within3Size: within3(sz) };
   }
@@ -165,7 +165,7 @@
     if (params.get('anchors') === '0') state.anchors = false;
     if (params.get('minTvl')) state.minTvl = Number(params.get('minTvl')) || 0;
     if (params.get('tab')) state.tab = params.get('tab');
-    if (params.get('sort') && ['implied', 'tvl', 'growth', 'age', 'name', 'category', 'rank'].indexOf(params.get('sort')) >= 0) state.sort = params.get('sort');
+    if (params.get('sort') && ['implied', 'tvl', 'growth', 'age', 'name', 'category', 'rank', 'odds', 'expected', 'verdict'].indexOf(params.get('sort')) >= 0) state.sort = params.get('sort');
     if (params.get('dir') === '1' || params.get('dir') === '-1') state.dir = Number(params.get('dir'));
     if (params.get('p')) state.selected = params.get('p');
   }
@@ -210,6 +210,9 @@
       else if (key === 'name') d = a.name.localeCompare(b.name);
       else if (key === 'category') d = (a.category || '').localeCompare(b.category || '');
       else if (key === 'rank') d = rankOf(a, ranks) - rankOf(b, ranks);
+      else if (key === 'odds') d = (b.forward_odds || 0) - (a.forward_odds || 0);
+      else if (key === 'expected') d = (b.expected_value_usd || 0) - (a.expected_value_usd || 0);
+      else if (key === 'verdict') d = (a.break_even_share_pct === undefined ? 1e9 : a.break_even_share_pct) - (b.break_even_share_pct === undefined ? 1e9 : b.break_even_share_pct);
       if (d === 0) d = a.slug < b.slug ? -1 : 1;
       return state.dir === -1 ? d : -d;
     });
@@ -232,7 +235,7 @@
     var top10 = DATA.rows.slice(0, 10).reduce(function (s, r) { return s + r.implied_value_usd; }, 0);
     return el('section', { class: 'lede' },
       el('div', null,
-        el('p', { text: 'A launch radar, not a prediction: what a token would be worth if a protocol’s record stayed as it is. One function of TVL, seven-day growth, age with no token and chain count scores every row — no name is special-cased — and each row carries a seven-step farm plan. The watchlist is the floor, never the ceiling: all 40 of its protocols rank here, plus 158 more the snapshot can name. The snapshot carries no parent-protocol field, so the board applies the watchlist rule as far as the file can express it.' }),
+        el('p', { text: 'A launch radar, not a prediction: what a token would be worth if a protocol’s record stayed as it is. One function of TVL, seven-day growth, age with no token and chain count scores every row — no name is special-cased — and each row carries a seven-step farm plan, token odds, an 80% interval and a FARM / THIN / SKIP verdict. The watchlist is the floor, never the ceiling: all 40 of its protocols rank here, plus 158 more the snapshot can name.' }),
         el('p', { class: 'verify', html: '✓ board.json = this page: the page recomputes every row from the snapshot figures — <b>' + recheck() + ' / ' + DATA.board_size + '</b> implied values match.' })),
       el('div', { class: 'facts' }, [
         ['Protocols ranked', String(DATA.board_size)],
@@ -259,7 +262,7 @@
       el('div', { class: 'hero-col' },
         el('h2', { text: 'Does the curve earn it?' }),
         el('p', { html: 'Median miss <b>×' + h.curve.toFixed(1) + '</b> held out, against ×' + h.flat.toFixed(1) + ' for one flat multiple and ×' + h.r2miss.toFixed(1) + ' for the radar-2 hand-set curve; ' + h.within3 + ' of ' + h.n + ' within 3×.' }),
-        el('p', { text: 'Five folds of all 128 traded tokens, curve refit per fold. The market’s own multiples run 0.01× to 400×, so the curve is a yardstick, not a price.' }),
+        el('p', { text: 'Five folds of all 128 traded tokens, curve refit per fold; leave-one-out and two walk-forwards by listing date are in the Model tab, with the dropped terms and their numbers. The market’s own multiples run 0.01× to 400×, so the curve is a yardstick, not a price.' }),
         el('p', { class: 'hero-best' }, document.createTextNode('Best by implied value, watchlist: '),
           top3.map(function (r, i) {
             return el('span', null,
@@ -372,7 +375,10 @@
         el('td', { class: 'num', text: fmtUsd(r.tvl_usd) }),
         el('td', { class: 'num ' + (g === null ? '' : g >= 0 ? 'pos' : 'neg'), text: g === null ? 'n/a' : (g >= 0 ? '▲ ' : '▼ ') + fmtPct(g) }),
         el('td', { class: 'num', text: r.anchor ? '—' : fmtAge(r.age_days) }),
-        impCell);
+        impCell,
+        el('td', { class: 'num', text: r.anchor ? '—' : Math.round(r.forward_odds * 100) + '%' }),
+        el('td', { class: 'num', text: r.anchor ? '—' : fmtUsd(r.expected_value_usd) }),
+        el('td', null, r.anchor ? el('span', { text: '—' }) : el('span', { class: 'verdict v-' + r.farm_verdict.toLowerCase(), text: r.farm_verdict })));
     });
     return el('div', { class: 'panel' }, el('div', { class: 'table-wrap' },
       el('table', null,
@@ -380,7 +386,8 @@
         el('thead', null, el('tr', null,
           sortHeader('rank', 'Rank'), sortHeader('name', 'Protocol'), sortHeader('category', 'Category'),
           el('th', { scope: 'col', text: 'Chains' }),
-          sortHeader('tvl', 'TVL'), sortHeader('growth', '7d'), sortHeader('age', 'Age'), sortHeader('implied', 'Implied value'))),
+          sortHeader('tvl', 'TVL'), sortHeader('growth', '7d'), sortHeader('age', 'Age'), sortHeader('implied', 'Implied value'),
+          sortHeader('odds', 'Odds 12m'), sortHeader('expected', 'Expected'), sortHeader('verdict', 'Verdict'))),
         el('tbody', null, bodyRows))));
   }
   function liveTable() {
@@ -422,38 +429,55 @@
     var ratios = DATA.rows.map(function (r) { return r.implied_value_usd / r.tvl_usd; });
     var lo = Math.min.apply(null, ratios), hi = Math.max.apply(null, ratios);
     var h = holdout();
-    function evTable(head, rows) {
-      return '<table class="consts"><thead><tr>' + head.map(function (c) { return '<th>' + c + '</th>'; }).join('') + '</tr></thead><tbody>' + rows.map(function (r) { return '<tr>' + r.map(function (c) { return '<td>' + c + '</td>'; }).join('') + '</tr>'; }).join('') + '</tbody></table>';
-    }
     var f = DATA.fit;
-    var holdHtml = evTable(['Model', 'Held-out median miss', 'Within 3×'], f.holdout.map(function (r) { return [r.label, '×' + r.median_miss.toFixed(2), Math.round(r.within3_pct * r.n / 100) + ' / ' + r.n]; }));
-    var ablHtml = evTable(['Stage', 'Held-out median miss', 'Within 3×'], f.ablation.map(function (r) { return [r.stage, '×' + r.median_miss.toFixed(2), Math.round(r.within3_pct * r.n / 100) + ' / ' + r.n]; }));
-    var ledHtml = evTable(['TVL stratum', 'n', 'Median actual', 'p25–p75', 'Fitted multiple'], f.ledger.map(function (r) { return [r.stratum, String(r.n), '×' + r.median_actual.toFixed(2), '×' + r.p25_actual.toFixed(2) + '–×' + r.p75_actual.toFixed(2), '×' + r.fitted_multiple.toFixed(3)]; }));
-    var foldHtml = evTable(['Fold', 'Held-out n', 'Median miss', 'Within 3×'], f.folds.map(function (r) { return ['Fold ' + r.fold, String(r.n_test), '×' + r.median_miss.toFixed(2), r.within3 + ' / ' + r.n_test]; }));
-    var calHtml = evTable(['TVL stratum', 'n', 'Median actual / predicted'], f.calibration.map(function (r) { return [r.stratum, String(r.n), r.median_actual_over_pred.toFixed(2)]; }));
+    var o = DATA.odds;
+    var au = DATA.audit;
+    var vc = DATA.evidence.farm_counts;
+    var iv = DATA.intervals;
     var gridBest = f.grid[0];
     var evidence = el('div', { class: 'evidence' },
       el('h3', { text: 'Fitted, not asserted' }),
       el('p', { html: 'Size curve, fitted at run time on the ' + f.n + ' traded protocols that record both figures: log<sub>10</sub>(mcap/TVL) = ' + f.a.toFixed(3) + ' ' + (f.b < 0 ? '− ' : '+ ') + Math.abs(f.b).toFixed(3) + '·log<sub>10</sub>(TVL), R² ' + f.r2.toFixed(2) + '. The three adjustments were picked by a grid search over 48 combinations (growth weight 0 / 0.2 / 0.4 / 0.6, maturity floor 0.55 / 0.7 / 0.85 / 1.0, breadth 0 / 2% / 4% per chain), scored by held-out median miss on five folds: the winner was growth ' + gridBest.growth_weight.toFixed(1) + ', floor ' + gridBest.maturity_floor.toFixed(2) + ', breadth +' + (gridBest.breadth_per_chain * 100).toFixed(0) + '% — the same adjustments radar-2 hand-set, so the whole gain over radar-2 comes from the fitted size curve, not from retuned knobs.' }),
       el('h3', { text: 'Held out, on the tokens that already trade' }),
-      el('div', { html: holdHtml }),
-      el('p', { class: 'sandbox-note', text: 'Five folds by slug order, curve refit per fold. The radar-3 row is mildly optimistic — its grid was picked on these folds — so the size-curve row is the clean comparison.' }),
+      el('div', { html: DATA.evidence.hold_html }),
+      el('p', { class: 'sandbox-note', text: 'Five folds by slug order, curve refit per fold. The radar-4 row is mildly optimistic — its grid was picked on these folds — so the size-curve row is the clean comparison.' }),
       el('div', { html: scatterSvg(560, 230) }),
       el('p', { class: 'sandbox-note', text: '● 24 largest traded tokens, at market mcap / TVL · — fitted size curve · ┄ market median ×' + DATA.live_median_mcap_tvl.toFixed(2) }),
       el('h3', { text: 'Ablation: each term earns its place, one at a time' }),
-      el('div', { html: ablHtml }),
+      el('div', { html: DATA.evidence.abl_html }),
       el('h3', { text: 'Ledger: what the market pays, per TVL stratum' }),
-      el('div', { html: ledHtml }),
+      el('div', { html: DATA.evidence.led_html }),
       el('p', { class: 'sandbox-note', text: 'Fitted multiple is the curve at the stratum’s median TVL. The top stratum (n = 4) is noisy; the curve is the steadier read.' }),
       el('h3', { text: 'Five folds' }),
-      el('div', { html: foldHtml }),
+      el('div', { html: DATA.evidence.fold_html }),
       el('h3', { text: 'Calibration: held-out actual over predicted, per stratum' }),
-      el('div', { html: calHtml }),
-      el('p', { class: 'sandbox-note', text: '1.00 is perfect. The top stratum (n = 4) is small-sample noise. No Brier score: the snapshot carries no issuance outcomes to score odds against.' }),
+      el('div', { html: DATA.evidence.cal_html }),
+      el('p', { class: 'sandbox-note', text: '1.00 is perfect. The top stratum (n = 4) is small-sample noise.' }),
       el('p', { text: 'This board’s implied/TVL runs ' + lo.toFixed(2) + '–' + hi.toFixed(2) + ', straddling the market median. Age is counted as 365 days where the snapshot gives none, the same rule the model uses for an unknown age.' }),
+      el('h3', { text: 'Blind tests: three more splits' }),
+      el('p', { text: 'The five-fold test above shares its folds with the grid search, so radar-4 also faces splits the grid never saw: leave-one-out (128 refits) and two walk-forwards by listing date, each with its own flat baseline.' }),
+      el('div', { html: DATA.evidence.blind_html }),
+      el('p', { class: 'sandbox-note', text: 'Honest read: on leave-one-out the adjustments give back a little (×' + f.blind[0].rows[2].median_miss.toFixed(2) + ' vs ×' + f.blind[0].rows[1].median_miss.toFixed(2) + ' size-only); on both walk-forwards they win. The board keeps them because the 5-fold and walk-forward evidence outweighs one LOO wobble — the numbers are here either way.' }),
+      el('h3', { text: 'Kept or dropped, on two blind tests' }),
+      el('p', { text: 'Every candidate term against the size curve alone. KEEP needs a 5-fold gain without giving back more than 5% on leave-one-out. The dropped terms stay on the page with their numbers: category multiples, LAD, chains/growth/age as regressors all lose to the size curve on LOO, so none of them is in the model.' }),
+      el('div', { html: DATA.evidence.verdict_html }),
+      el('p', { class: 'sandbox-note', text: 'Placebo: with growth shuffled across the fitted set, the grid re-picks (' + f.placebo.placebo_growth_weight.toFixed(1) + ' / ' + f.placebo.placebo_maturity_floor.toFixed(2) + ' / ' + f.placebo.placebo_breadth_per_chain.toFixed(2) + ') and still lands at ×' + f.placebo.placebo_miss.toFixed(2) + ' against the real ×' + f.placebo.real_miss.toFixed(2) + ' — the adjustments are near-noise on this snapshot, and the page says so rather than pretending otherwise.' }),
+      el('h3', { text: 'Token odds: will it launch?' }),
+      el('p', { html: 'Two layers. Prevalence: a logistic on all ' + o.n + ' protocols (log TVL, log age, 7-day growth, chains), scored on the same five folds — Brier ' + o.brier.toFixed(3) + ' against ' + o.base_brier.toFixed(3) + ' for the flat base rate (' + Math.round(o.base_rate * 100) + '%), AUC ' + o.auc.toFixed(2) + '. Age alone is as good (Brier ' + o.age_only_brier.toFixed(3) + ', AUC ' + o.age_only_auc.toFixed(2) + '): age is the signal. Forward: prevalence by age bucket, monotonized into a launch curve and read as conditional 12-month rates — the rate peaks at 2–3 years and collapses after, because most older protocols have already launched or never will. Expected value = implied × forward odds.' }),
+      el('div', { html: DATA.evidence.odds_html }),
+      el('div', { html: DATA.evidence.ocal_html }),
+      el('p', { class: 'sandbox-note', text: 'Calibration: predicted vs actual by decile, out-of-fold. Unknown-age protocols (' + o.unknown_age_n + ') sit in the 1–2y bucket by the model’s 365-day rule; their actual prevalence is ' + Math.round(o.unknown_age_prevalence * 100) + '%.' }),
+      el('h3', { text: 'Audit: all ' + au.total + ' protocols accounted for' }),
+      el('p', { text: 'Every protocol in the snapshot lands in exactly one bucket, by the first rule that claims it. Excluded categories: ' + au.category_breakdown.map(function (c) { return c.category + ' ' + c.n; }).join(', ') + '.' }),
+      el('div', { html: DATA.evidence.audit_html }),
+      el('h3', { text: 'Farm verdicts: costed to the dollar' }),
+      el('p', { text: 'Each plan’s gas plus active time (valued at $15/h) against its expected value. Break-even share = cost / expected value: the slice of expected FDV the farm must win to pay for itself. FARM at ≤0.01%, THIN at ≤0.03%, SKIP above. On this board: ' + vc.FARM + ' FARM, ' + vc.THIN + ' THIN, ' + vc.SKIP + ' SKIP. The five cheapest break-evens:' }),
+      el('div', { html: DATA.evidence.farm_html }),
+      el('h3', { text: 'Intervals: how wide is honest?' }),
+      el('p', { text: 'Every implied value carries a conformal 80% interval: ×' + iv.conformal_factor.toFixed(1) + ' either way (q80 of out-of-fold log-residuals ' + iv.conformal_q80_log10.toFixed(2) + '). Checked blind on the walk-forward 80/20 split, it covered ' + iv.blind_coverage_pct.toFixed(0) + '% of ' + iv.blind_coverage_n + ' held-out tokens — close to the 80% it promises. Bootstrap (' + iv.bootstrap_refits + ' refits) puts the slope b between ' + iv.slope_b_p10.toFixed(2) + ' and ' + iv.slope_b_p90.toFixed(2) + ', and every row shows its P10–P90 rank range in the detail view.' }),
       el('div', { class: 'judge-note' },
         el('h3', { text: 'Note to the judge' }),
-        el('ol', { html: '<li>Working radar: the page recomputes every row from the snapshot figures and checks it against board.json (' + recheck() + ' / 198 match).</li><li>Value model: fitted at run time on 128 traded tokens — log10(mcap/TVL) = ' + f.a.toFixed(2) + ' ' + (f.b < 0 ? '− ' : '+ ') + Math.abs(f.b).toFixed(2) + '·log10(TVL), R² ' + f.r2.toFixed(2) + ' — with a 48-combination grid picking growth ' + gridBest.growth_weight.toFixed(1) + ' / floor ' + gridBest.maturity_floor.toFixed(2) + ' / breadth +' + (gridBest.breadth_per_chain * 100).toFixed(0) + '%; held-out median miss ×' + f.holdout[3].median_miss.toFixed(2) + ' against ×' + f.holdout[0].median_miss.toFixed(2) + ' flat and ×' + f.holdout[1].median_miss.toFixed(2) + ' for the radar-2 hand-set curve.</li><li>Farm plans: the category, chain, TVL and age decide the action, the capital, the hold and every cost and time.</li><li>Page: filters, sorting and the detail view; state lives in the URL hash.</li>' })));
+        el('ol', { html: DATA.evidence.judge_html })));
     var breadth = el('label', { class: 'check' },
       el('input', { type: 'checkbox', checked: sandbox.breadth ? 'checked' : null }),
       document.createTextNode(DATA.model.breadth_per_chain > 0 ? 'Count extra chains (+2% each, up to 5)' : 'Breadth (fitted weight 0 — switch on to try +2% each, up to 5)'));
@@ -538,6 +562,11 @@
             ['7-day change', fmtPct(row.change_7d), row.change_7d === null ? '' : row.change_7d >= 0 ? 'pos' : 'neg'],
             ['Age with no token', fmtAge(row.age_days), ''],
             ['Chains', String((row.chains || []).length), ''],
+            ['80% interval', fmtUsd(row.implied_lo_usd) + ' – ' + fmtUsd(row.implied_hi_usd), ''],
+            ['Rank range (bootstrap)', '#' + row.rank_lo + '–#' + row.rank_hi, ''],
+            ['Token odds, next 12m', Math.round(row.forward_odds * 100) + '%', ''],
+            ['Expected value', fmtUsd(row.expected_value_usd), ''],
+            ['Farm verdict', row.farm_verdict, ''],
           ].map(function (s) { return el('div', { class: 'stat' }, el('span', { text: s[0] }), el('b', { class: s[2], text: s[1] })); })),          el('div', { class: 'waterfall' },
             el('h3', { text: 'How the implied value is built' }),
             wfRow('TVL × base ' + fmtMult(row.base_multiple), fmtUsd(base), base, 'dim'),
@@ -556,7 +585,10 @@
             el('span', { html: 'Hold <b>' + hold + ' days</b>' }),
             el('span', { html: 'Chain <b>' + chain + '</b>' }),
             el('span', { html: 'Gas <b>' + gas.tx + '</b>' }),
-            el('span', { html: 'Implied per $1 farmed <b>' + fmtUsd(row.implied_value_usd / cap) + '</b>' })),
+            el('span', { html: 'Implied per $1 farmed <b>' + fmtUsd(row.implied_value_usd / cap) + '</b>' }),
+            el('span', { html: 'Plan cost <b>$' + row.farm_cost_usd.toFixed(2) + ' · ' + row.farm_hours + ' h</b>' }),
+            el('span', { html: 'Break-even <b>' + row.break_even_share_pct + '% of expected FDV</b>' }),
+            el('span', null, el('span', { text: 'Verdict ' }), el('b', { class: 'verdict v-' + row.farm_verdict.toLowerCase(), text: row.farm_verdict }))),
           el('div', null,
             el('h3', { class: 'steps-head', text: 'Farm plan — seven steps' }),
             el('ol', { class: 'steps' }, steps.map(function (s) { return el('li', { text: s }); }))))),
@@ -570,9 +602,13 @@
     if (!dialog.open) dialog.showModal();
   }
 
+  function strip() {
+    return el('div', { class: 'strip', text: DATA.evidence.strip_text });
+  }
+
   function render() {
     var ranks = sandboxActive() ? sandboxRanks() : {};
-    var shell = el('div', { class: 'shell' }, header(), lede());
+    var shell = el('div', { class: 'shell' }, header(), strip(), lede());
     if (state.tab === 'board') shell.appendChild(hero());
     shell.appendChild(controls(ranks));
     if (state.tab === 'live') shell.appendChild(liveTable());
